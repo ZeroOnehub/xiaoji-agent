@@ -1,7 +1,7 @@
 """小纪：住在飞书里的私人秘书。
 
 复用 nanobot 的飞书渠道、消息总线和 AgentLoop；不启动 nanobot 网关（它会带上网页端、
-定时任务和全部默认工具）。工具表被锁死，只有下面三个工具能注册进去：模型拿不到 shell、
+定时任务和全部默认工具）。工具表被锁死，只有下面四个工具能注册进去：模型拿不到 shell、
 任意文件读写、联网、给别人发消息，也不能删除记录（删除在本机管理后台里由用户自己做）。
 """
 import asyncio
@@ -25,13 +25,14 @@ from nanobot.providers.openai_compat_provider import OpenAICompatProvider
 from nanobot.providers.registry import find_by_name
 from nanobot.utils.document import extract_text
 
+from .digest import Digest, DigestTool
 from .engine import day
 from .store import Store
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = Path(os.getenv('PM_DATA_DIR', str(ROOT / '.data')))
 CONFIG = DATA / 'nanobot' / 'config.json'
-ALLOWED_TOOLS = frozenset({'make_minutes', 'remember', 'recall'})
+ALLOWED_TOOLS = frozenset({'make_minutes', 'remember', 'recall', 'daily_digest'})
 # nanobot 自带的 skill 会在系统提示词里宣传小纪没有的能力，全部关掉。
 BUILTIN_SKILLS = ['clawhub', 'cron', 'github', 'image-generation', 'memory', 'my', 'nanobot-document',
                   'skill-creator', 'summarize', 'tmux', 'update-setup', 'weather']
@@ -49,6 +50,7 @@ SOUL = '''# 小纪
 1. **整理会议 / 课堂录音**：用户发来转写稿文件（docx、txt、md、pdf）时，调用 make_minutes，把返回的纪要原样发给用户，不要删改待办和原话引用。用户只发了音频时，说明目前只支持转写稿（通义听悟、飞书妙记导出的文字稿），音频转写还在开发。
 2. **记事**：只有用户明确说「记下」「记住」「帮我记」时才调用 remember，然后复述记下的内容。不要主动替用户记任何东西。
 3. **查记录**：用户问以前的事、以前开过的会时，先调用 recall，按查到的内容回答，并说明出自哪条记录；查不到就直说没有记录，不要编。
+4. **每日摘要**：每天美国太平洋时间 00:05 会自动推送前一天的摘要。用户要「摘要」时调用 daily_digest，把结果原样发给用户。
 
 ## 你不能做的
 执行命令、改文件、上网、给别人发消息、删除记录。用户要删除记录，告诉他在电脑上打开管理后台 http://127.0.0.1:8787 删除。
@@ -246,14 +248,16 @@ class RecallTool(Tool):
         return json.dumps(out, ensure_ascii=False) if out else '没有找到相关记录。'
 
 
-def build(store, bus, provider, workspace, media_root, out_dir, config=None):
+def build(store, bus, provider, workspace, media_root, out_dir, config=None, digest=None):
     workspace.mkdir(parents=True, exist_ok=True)
     (workspace / 'SOUL.md').write_text(SOUL, encoding='utf-8')
     loop = AgentLoop(bus=bus, provider=provider, workspace=workspace, max_iterations=6,
                      restrict_to_workspace=True, provider_retry_mode='off', tool_registry=LockedRegistry(),
                      channels_config=config.channels if config else None, disabled_skills=BUILTIN_SKILLS,
                      timezone=os.getenv('PM_TIMEZONE') or None)
-    for tool in (MinutesTool(store, provider, media_root, out_dir), RememberTool(store), RecallTool(store)):
+    digest = digest or Digest(store, provider, out_dir.parent / 'digests')
+    for tool in (MinutesTool(store, provider, media_root, out_dir), RememberTool(store), RecallTool(store),
+                 DigestTool(digest)):
         loop.tools.register(tool)
     assert set(loop.tools.tool_names) == ALLOWED_TOOLS, loop.tools.tool_names
     return loop
@@ -264,6 +268,17 @@ def use_certifi_bundle():
     飞书长连接用的 websockets 走默认证书路径就会校验失败。统一改用 certifi 的证书包。"""
     import certifi
     os.environ.setdefault('SSL_CERT_FILE', certifi.where())
+
+
+def digest_target():
+    """每日摘要只发给用户本人：XIAOJI_DIGEST_TO，或飞书 allowFrom 里的第一个人。"""
+    if os.getenv('XIAOJI_DIGEST_TO'):
+        return os.environ['XIAOJI_DIGEST_TO']
+    try:
+        inst = json.loads(CONFIG.read_text(encoding='utf-8'))['channels']['feishu']['instances'][0]
+        return (inst.get('allowFrom') or [None])[0]
+    except (OSError, ValueError, KeyError, IndexError):
+        return None
 
 
 async def serve():
@@ -277,11 +292,19 @@ async def serve():
     unexpected = set(channels.enabled_channels) - {'feishu'}
     if unexpected or 'feishu' not in channels.enabled_channels:
         raise SystemExit(f'渠道配置不对：只应启用飞书，实际是 {channels.enabled_channels}')
-    loop = build(store, bus, deepseek(store), DATA / 'nanobot' / 'workspace', get_media_dir('feishu'),
-                 DATA / 'minutes', config)
+    provider = deepseek(store)
+    digest = Digest(store, provider, DATA / 'digests')
+    loop = build(store, bus, provider, DATA / 'nanobot' / 'workspace', get_media_dir('feishu'),
+                 DATA / 'minutes', config, digest)
     logger.info('小纪已启动：渠道 {}，工具 {}', channels.enabled_channels, sorted(loop.tools.tool_names))
+    tasks = [loop.run(), channels.start_all()]
+    target = digest_target()
+    if target:
+        tasks.append(digest.run(bus, target))
+    else:
+        logger.warning('allowFrom 为空，不推送每日摘要')
     try:
-        await asyncio.gather(loop.run(), channels.start_all())
+        await asyncio.gather(*tasks)
     finally:
         await channels.stop_all()
 
