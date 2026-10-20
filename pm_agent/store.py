@@ -65,7 +65,7 @@ class Store:
             row = db.execute('SELECT * FROM items WHERE id=?', (ident,)).fetchone()
             if not row:
                 raise ValueError('记录不存在')
-            if row['kind'] not in ('memory', 'opportunity', 'prd', 'source'):
+            if row['kind'] not in ('memory', 'opportunity', 'prd', 'source', 'minutes'):
                 raise ValueError('不允许修改此记录')
             aid = uuid.uuid4().hex
             db.execute('INSERT INTO approvals(id,target,version,action,content,created) VALUES (?,?,?,?,?,?)',

@@ -4,3 +4,5 @@ fastapi==0.146.0
 uvicorn==0.54.0
 python-dotenv==1.2.4
 pytest==9.1.1
+# 飞书渠道（nanobot 首次启用飞书时会自动安装，这里固定版本）
+lark-oapi==1.7.5

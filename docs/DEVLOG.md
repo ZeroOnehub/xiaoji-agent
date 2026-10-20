@@ -21,3 +21,18 @@
 
 - 后续补充：GitHub 搜索工具实际联网检索成功；本地独立 Git 仓库初始化，未提交远程。Chrome 实测拒绝覆盖审批成功。
 - 开发收尾时发现新增《00_交接总览与通用规范_副本.md》，已完整阅读；此前“未提供”是最初目录状态，现已补齐。按当前单项目范围核对交付；用户姓名、社交主页、提交邮箱等未提供的信息不编造。
+
+## 2026-10-20：转型小纪，飞书接通，会议纪要可用
+
+- 用户同意转型：PM 灵感台改名「小纪」，定位为住在飞书里的私人秘书；PRD 交给 AIPM 工坊；不做笔记仓库；第一个功能是会议录音整理。开发工具从 Codex 换成 Claude Code。
+- 飞书机器人用 nanobot 自带的「扫码一键创建」流程建好（用户本人扫码），凭据只在本机 `.data/`。
+- 没有用 nanobot 网关：它会带上网页端、定时任务和 22 个默认工具（含执行命令、读写文件）。改为自己的启动入口 `xiaoji.py`：只复用飞书渠道、消息总线和 AgentLoop。
+- 工具表锁死（`LockedRegistry`）：只接受 `make_minutes`、`remember`、`recall`，nanobot 加载默认工具时全部被丢弃；有测试。
+- 预算：包一层 nanobot 自带的 DeepSeek provider，每次调用前按请求字节数预留、调用后按实际用量结算。默认关闭 DeepSeek 思考模式（`reasoning_effort=none`）。
+- 纪要：一份 2.5 小时课堂转写稿约 4.6 万字。为了不让转写稿进入聊天历史（否则之后每句话都要为它付费），`make_minutes` 自己做一次独立的模型调用，只把纪要返回给对话。用虚构的周会转写稿实测，单次约 $0.0009，待办、负责人、原话引用齐全，推算的日期标了【待核实】。
+- 踩坑：
+  1. nanobot 首次启用飞书时会自动 pip 安装 lark-oapi，并把 websockets 从 16.1.1 降到 15.0.1。已写进 requirements，测试和 pip check 都通过。
+  2. 飞书长连接报「self-signed certificate in certificate chain」。一开始误判为系统代理拦截，实际是 python.org 安装的 Python 没装根证书（默认证书文件不存在），websockets 用默认证书路径就失败。改为启动时让 `SSL_CERT_FILE` 指向 certifi 证书包。
+  3. DeepSeek 在 nanobot 里走 Responses 接口，不接受 `thinking` 参数，要用 `reasoning_effort` 关思考。
+- 管理后台：纪要显示在「机会与文档」里，可以申请删除。
+- 测试 16 个通过（原 10 个 + 小纪 6 个：工具锁、附件路径越界、纪要不进历史、记事查询、预算结算与超限）。
