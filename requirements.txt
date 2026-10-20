@@ -1,0 +1,6 @@
+# Pinned source examined during implementation; build with NANOBOT_SKIP_WEBUI_BUILD=1.
+nanobot-ai @ git+https://github.com/HKUDS/nanobot.git@dca49c258a9d7efb1475dd79c7a3fd2e5b746bd2
+fastapi==0.146.0
+uvicorn==0.54.0
+python-dotenv==1.2.4
+pytest==9.1.1
